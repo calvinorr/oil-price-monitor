@@ -1,0 +1,28 @@
+{
+  "name": "oil-price-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo 'Run npx vercel dev manually'",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "drizzle:push": "drizzle-kit push --config drizzle.config.ts",
+    "drizzle:migrate": "drizzle-kit migrate --config drizzle.config.ts"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "cheerio": "^1.0.0-rc.12",
+    "drizzle-orm": "^0.44.7",
+    "resend": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.12.0",
+    "@vercel/node": "^3.0.11",
+    "drizzle-kit": "^0.31.7",
+    "eslint": "^8.57.1",
+    "prettier": "^3.2.5",
+    "typescript": "^5.5.4",
+    "vercel": "^48.10.7"
+  }
+}

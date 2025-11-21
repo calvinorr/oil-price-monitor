@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "api/scrape-oil-prices.ts": {
+      "runtime": "nodejs20.x"
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/scrape-oil-prices",
+      "schedule": "0 8 * * *"
+    }
+  ]
+}

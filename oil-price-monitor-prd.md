@@ -20,20 +20,20 @@ Build an automated system that scrapes UK heating oil prices from CheapestOil.co
 
 ```
 ┌──────────────┐
-│ Cron Trigger │ ← Daily at 08:00 GMT
+│ Cron Trigger │ ← Daily at 08:00 GMT (Vercel Cron)
 └──────┬───────┘
        │
        ▼
-┌──────────────────┐
-│ Edge Function    │ Supabase Function
-│ (Scraper)        │ • Fetch HTML
-└──────┬───────────┘ • Parse data
-       │              • Store to DB
-       ├─► Supabase DB (PostgreSQL)
-       │   └─ oil_prices table
-       │   └─ email_logs table
-       │
-       ▼
+┌───────────────────────┐
+│ Serverless Function   │ Vercel Edge/Node Function
+│ (Scraper + Reporter)  │ • Fetch HTML
+└──────────┬────────────┘ • Parse data
+           │              • Store to DB
+           ├─► Neon Postgres
+            │    └─ oil_prices table
+            │    └─ email_logs table
+            │
+            ▼
 ┌──────────────────┐
 │ Email Service    │ Resend API
 │ (Reporter)       │ • Format HTML
@@ -42,24 +42,24 @@ Build an automated system that scrapes UK heating oil prices from CheapestOil.co
 
 ### 1.2 Components
 
-1. **Scraper Function** (Edge Function)
-   - Runs on schedule or manual trigger
+1. **Scraper Function** (Vercel Edge/Node Function)
+   - Runs on schedule (Vercel Cron) or manual trigger
    - Fetches HTML from CheapestOil
    - Parses supplier pricing table
    - Calculates aggregates
    - Stores to database
 
-2. **Database** (Supabase PostgreSQL)
+2. **Database** (Neon Postgres)
    - Historical price records
    - Email delivery logs
    - Supplier snapshots
 
-3. **Reporter Function** (Email)
+3. **Reporter Function** (Email inside same function)
    - Formats daily report
    - Includes trend analysis
    - Sends via Resend API
 
-4. **Scheduler** (PostgreSQL pg_cron)
+4. **Scheduler** (Vercel Cron)
    - Triggers scraper daily
    - Configurable time
 
@@ -135,17 +135,21 @@ From the supplier pricing table:
 
 ## 3. Tech Stack
 
-### 3.1 Recommended (Aligned with Your Preferences)
+### 3.1 Recommended (Aligned with Low/No-Cost Preferences)
 
 | Layer | Technology | Why |
 |-------|------------|-----|
-| **Language** | TypeScript | Type safety, your preference |
-| **Runtime** | Supabase Edge Functions (Deno) | Serverless, integrates with Supabase |
+| **Language** | TypeScript | Type safety, familiar tooling |
+| **Runtime** | Vercel Edge or Node Functions | Simple deploys, generous free tier |
 | **Scraping** | Cheerio | Lightweight DOM parsing, fast |
-| **Database** | Supabase PostgreSQL | Already in your stack, free tier |
+| **Database** | Neon Postgres | Serverless Postgres, free tier fits workload |
+| **ORM** | Drizzle ORM | Type-safe SQL, lightweight, works well on edge |
 | **Email** | Resend API | Dev-friendly, 3k/month free tier |
-| **Scheduler** | PostgreSQL pg_cron | Native to Supabase |
-| **Hosting** | Supabase Edge | Zero-cost serverless |
+| **Scheduler** | Vercel Cron | Managed cron, free tier |
+| **Hosting** | Vercel | Zero-cost for this scale |
+| **Migrations** | Drizzle Kit SQL migrations | Works with Neon and local dev |
+
+**Deployment target**: Vercel Node function (not Edge) unless parsing proves safe on Edge. Neon HTTP pooler works well with Node runtime; Edge runtime can use `postgres-neon` if desired, but stick to Node first for simplicity and stable TLS pooling.
 
 ### 3.2 Alternative (If Prefer Python)
 
@@ -154,6 +158,12 @@ From the supplier pricing table:
 - Scraping: **BeautifulSoup4** + **Requests**
 - Everything else: Same
 
+### 3.3 Ops & Costs
+- Neon free tier is sufficient (lightweight single daily job + occasional manual trigger). Use the HTTP pooler connection string for serverless functions.
+- Vercel cron + serverless invocations fit in the free tier at 1 run/day.
+- Resend free tier allows 3k emails/month; keep daily send to a single recipient.
+- No stateful infra beyond Neon; backups handled by Neon automatically.
+
 ---
 
 ## 4. Database Schema
@@ -161,6 +171,10 @@ From the supplier pricing table:
 ### 4.1 Main Tables
 
 ```sql
+-- Enable UUID generation in Neon
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- Oil Prices Historical Data
 CREATE TABLE oil_prices (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -242,16 +256,16 @@ LIMIT 10;
 ## 5. Implementation Roadmap
 
 ### Phase 1: Setup (30 mins)
-- [ ] Create Supabase project
+- [ ] Create Neon project + database
 - [ ] Run migrations (create tables)
 - [ ] Set up Resend account + API key
-- [ ] Store secrets in Supabase Edge Function config
+- [ ] Set Vercel project + env vars
 
 ### Phase 2: Scraper Function (2-3 hours)
-- [ ] Create Edge Function project structure
+- [ ] Create Vercel function (Edge/Node) project structure
 - [ ] Implement HTML scraping logic
 - [ ] Test parsing on live site
-- [ ] Implement database insertion
+- [ ] Implement database insertion (Neon + Drizzle)
 - [ ] Error handling + logging
 
 ### Phase 3: Email Reporter (1-2 hours)
@@ -261,8 +275,7 @@ LIMIT 10;
 - [ ] Test email delivery
 
 ### Phase 4: Scheduler (30 mins)
-- [ ] Set up pg_cron trigger
-- [ ] Configure daily 08:00 GMT execution
+- [ ] Configure Vercel Cron for daily 08:00 GMT execution
 - [ ] Add manual trigger endpoint
 
 ### Phase 5: Testing & Monitoring (1 hour)
@@ -295,16 +308,18 @@ Check CheapestOil price and compare to last time
 ### 7.1 Manual Trigger
 
 ```bash
-curl -X POST https://your-project.supabase.co/functions/v1/scrape-oil-prices \
-  -H "Authorization: Bearer YOUR_ANON_KEY" \
+curl -X POST https://your-vercel-domain.vercel.app/api/scrape-oil-prices \
+  -H "Authorization: Bearer YOUR_SECRET_TOKEN" \
   -H "Content-Type: application/json"
 ```
+
+Auth: Reject if bearer token != `CRON_SECRET_TOKEN` env var. Return 401 for missing/invalid.
 
 ### 7.2 Get Price History
 
 ```bash
-curl "https://your-project.supabase.co/rest/v1/oil_prices?order=recorded_at.desc&limit=30" \
-  -H "apikey: YOUR_ANON_KEY"
+curl "https://your-vercel-domain.vercel.app/api/oil-prices?limit=30" \
+  -H "Authorization: Bearer YOUR_SECRET_TOKEN"
 ```
 
 ### 7.3 Get Latest Price
@@ -325,7 +340,7 @@ LIMIT 1;
 |----------|----------|
 | Network timeout | Retry 3x, log error, skip email |
 | Parse failure | Log HTML dump, alert via email |
-| Database error | Log error, Slack notification |
+| Database error | Log error, send error email (Resend) |
 | Email delivery failure | Retry, log, continue |
 
 ### 8.2 Monitoring
@@ -351,17 +366,20 @@ WHERE success = false
 ### 9.1 Secrets Management
 
 ```bash
-# Store in Supabase Edge Function Secrets
+# Store as Vercel project env vars
 RESEND_API_KEY=re_xxxxx
 EMAIL_TO=your@email.com
-SUPABASE_URL=https://xxxxx.supabase.co
-SUPABASE_SERVICE_KEY=xxxxx
+DATABASE_URL=postgres://user:pass@ep-xxxxx.neon.tech/dbname
+CRON_SECRET_TOKEN=some-strong-token  # used to auth cron/manual trigger
 ```
 
 ### 9.2 Database Access
-- Use **Service Role Key** in Edge Functions (server-side only)
-- Use **Anon Key** for client-side queries (if exposed)
-- Apply Row Level Security (RLS) policies if needed
+- Use **Neon connection string** with least-privilege user for the app
+- Rotate credentials if leaked; no RLS required unless exposing reads publicly
+
+### 9.3 API Auth
+- All routes require bearer token (`CRON_SECRET_TOKEN`). Do not expose unauthenticated endpoints.
+- Consider IP allowlist for cron source once domain is stable (optional).
 
 ---
 
@@ -376,15 +394,25 @@ SUPABASE_SERVICE_KEY=xxxxx
 
 ---
 
+## 11. Operational Notes & Constraints
+
+- **Politeness**: Single daily fetch + occasional manual triggers; set a descriptive User-Agent and short timeout (e.g., 10s) with 1–2 retries max.
+- **Parsing resilience**: Site HTML may change; log a small HTML snippet on parse failure to help adjust selectors.
+- **Environment**: Prefer Vercel Node runtime for easier Neon connections. If moving to Edge, switch to Neon HTTP driver and ensure Drizzle config supports it.
+- **Data caps**: Neon free tier storage is small; this dataset (1 row/day) is tiny—periodically prune HTML dumps if added.
+- **Time zone**: Run cron at 08:00 GMT; store timestamps in UTC.
+
+---
+
 ## Getting Started
 
 1. **Review this document** - Understand the architecture
 2. **Clone starter repo** - Get boilerplate code
-3. **Set up Supabase** - Create project and run migrations
+3. **Set up Neon** - Create database and run migrations
 4. **Implement scraper** - Write HTML parsing logic
 5. **Test manually** - Verify data extraction
-6. **Deploy function** - Push to Supabase Edge
-7. **Configure schedule** - Set up pg_cron
+6. **Deploy function** - Push to Vercel
+7. **Configure schedule** - Set up Vercel Cron
 8. **Monitor** - Check logs and emails
 
 ---
@@ -394,5 +422,10 @@ SUPABASE_SERVICE_KEY=xxxxx
 - Specific time for daily report (currently 08:00 GMT)?
 - Want alerts for price drops below certain level?
 - Include all 88 suppliers or just top 10 in email?
+
+**Decisions**:
+- Daily cron: 08:00 GMT
+- Email recipient: calvin.orr@gmail.com
+- Alert threshold: trigger alert when price drops by ≥5p per litre vs previous day
 
 Ready to code! 🚀
